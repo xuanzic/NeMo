@@ -18,15 +18,17 @@ import secrets
 import tarfile
 from io import BytesIO
 from pathlib import Path
-from typing import Generator, Iterable, List
+from typing import Generator, Iterable, List, Literal
 
 import soundfile
 from cytoolz import groupby
 from lhotse import AudioSource, Recording, SupervisionSegment
 from lhotse.cut import Cut
+from lhotse.dataset.dataloading import resolve_seed
 from lhotse.lazy import LazyIteratorChain, LazyJsonlIterator
 from lhotse.serialization import open_best
 from lhotse.utils import compute_num_samples
+from nemo.collections.common.parts.preprocessing.manifest import get_full_path
 
 
 class LazyNeMoIterator:
@@ -74,7 +76,7 @@ class LazyNeMoIterator:
 
     def __iter__(self) -> Generator[Cut, None, None]:
         for data in self.source:
-            audio_path = data.pop("audio_filepath")
+            audio_path = get_full_path(str(data.pop("audio_filepath")), str(self.path))
             duration = data.pop("duration")
             offset = data.pop("offset", None)
             recording = self._create_recording(audio_path, duration, data.pop("sampling_rate", None))
@@ -146,6 +148,12 @@ class LazyNeMoTarredIterator:
     Args ``manifest_path`` and ``tar_paths`` can be either a path/string to a single file, or a string in NeMo format
     that indicates multiple paths (e.g. "[[data/bucket0/tarred_audio_paths.json],[data/bucket1/...]]").
 
+    The ``shard_seed`` argument is used to seed the RNG shuffling the shards.
+    By default it's ``trng`` which samples a seed number from OS-provided TRNG (see Python ``secrets`` module).
+    Seed is resolved lazily so that every dataloading worker may sample a different one.
+    Override with an integer value for deterministic behaviour and consult Lhotse documentation for details:
+    https://lhotse.readthedocs.io/en/latest/datasets.html#handling-random-seeds
+
     Example of CutSet with inter-shard shuffling enabled::
 
         >>> cuts = lhotse.CutSet(LazyNeMoTarredIterator(
@@ -160,6 +168,7 @@ class LazyNeMoTarredIterator:
         manifest_path: str | Path,
         tar_paths: str | list,
         shuffle_shards: bool = False,
+        shard_seed: int | Literal["trng", "randomized"] = "trng",
         text_field: str = "text",
         lang_field: str = "lang",
     ) -> None:
@@ -188,6 +197,7 @@ class LazyNeMoTarredIterator:
         tar_paths = expand_sharded_filepaths(tar_paths)
         self.shard_id_to_tar_path: dict[int, str] = {int(strip_pipe(p).stem.split("_")[1]): p for p in tar_paths}
         self.shuffle_shards = shuffle_shards
+        self.shard_seed = shard_seed
         self.text_field = text_field
         self.lang_field = lang_field
         self._validate()
@@ -204,6 +214,7 @@ class LazyNeMoTarredIterator:
                     manifest_path=path,
                     tar_paths=tarpath,
                     shuffle_shards=False,
+                    shard_seed=self.shard_seed,
                     text_field=self.text_field,
                     lang_field=self.lang_field,
                 )
@@ -226,8 +237,8 @@ class LazyNeMoTarredIterator:
         shard_ids = self.shard_ids
 
         if self.shuffle_shards:
-            # Use TRNG for 100% randomness
-            random.Random(secrets.randbelow(2 ** 32)).shuffle(shard_ids)
+            seed = resolve_seed(self.shard_seed)
+            random.Random(seed).shuffle(shard_ids)
 
         for sid in shard_ids:
             shard_manifest = self.shard_id_to_manifest[sid]
