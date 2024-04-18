@@ -20,6 +20,7 @@ import tarfile
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Union
 
+import decord
 import torch
 import torch.nn.functional as F
 import transformers
@@ -28,8 +29,6 @@ from omegaconf import DictConfig
 from PIL import Image
 from torch.utils.data import Dataset, default_collate
 from transformers import CLIPImageProcessor
-import decord
-
 
 import nemo.collections.multimodal.data.neva.conversation as conversation_lib
 from nemo.collections.multimodal.data.clip.augmentations.augmentations import image_transform
@@ -95,17 +94,22 @@ class TarOrFolderImageLoader:
         else:
             return Image.open(os.path.join(self.image_folder, file_name)).convert('RGB')
         return None
+
+
 class TarOrFolderVideoLoader:
     """
     A class for loading videos from a tar archive or a regular folder.
+
     This class provides functionality to open and read videos from either a tar archive
     (.tar file) or a standard directory with video files. It builds an index of videos
     if the source is a tar archive for efficient access.
+
     Attributes:
         video_folder (str): The path to the tar archive or video folder.
         data_cfg (dict): A dictionary of configuration options for video decoding to frames
         tar_index (dict): A dictionary that maps file names to their tarfile member
                           objects if the video source is a tar archive.
+
     Methods:
         __init__(self, video_folder): Initializes the loader with the specified video folder.
         build_index(self): Builds an index of image file names and their corresponding
@@ -167,6 +171,7 @@ class TarOrFolderVideoLoader:
                     img = Image.fromarray(rgb_frame).convert('RGB')
                     frames.append(img)
                 return frames
+
 
 def tokenize(
     texts: Union[str, List[str]], tokenizer: Any, context_length: int, add_extra_token: int,
@@ -240,6 +245,7 @@ def preprocess_multimodal(sources: dict, multimodal_cfg: dict, cur_token_len: in
         default_token = DEFAULT_VIDEO_TOKEN
     else:
         return sources
+
     image_token_len = cur_token_len
     if not is_multimodal:
         return sources
@@ -463,8 +469,6 @@ def preprocess_nvgpt(sources: dict, tokenizer, cfg,) -> Dict:
     - The function asserts that each message in a conversation alternates between the defined roles and skips messages not starting with the 'human' role.
     """
 
-    """<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n\n<extra_id_1>User\n{user input}\n<extra_id_1>Assistant\n<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:4\n"""
-
     conv = conversation_lib.conv_nvgpt.copy()
 
     # Apply prompt templates
@@ -535,105 +539,6 @@ def preprocess_nvgpt(sources: dict, tokenizer, cfg,) -> Dict:
 
             cur_len += round_len
         target[cur_len:] = IGNORE_INDEX
-
-    if add_extra_token:
-        tokens = tokens[:, :-1].contiguous()
-        labels = labels[:, 1:].contiguous()
-    else:
-        labels = torch.roll(labels, shifts=-1, dims=-1)
-        labels[:, -1] = IGNORE_INDEX
-
-    return dict(tokens=tokens, labels=labels,)
-
-
-def preprocess_nv_dpo(sources: dict, tokenizer, cfg,) -> Dict:
-    """
-    Preprocess a given set of conversational sources using nvgpt conversation template
-
-    This function processes conversations by first ensuring the conversation starts with a 'human' role, then tokenizes the conversations, applies specific token replacements, and finally masks labels for training purposes.
-
-    Parameters:
-    - sources: A dictionary containing conversational data. Expected format is a dict of conversations, where each conversation is a list of messages, and each message is a dict with 'from' (role) and 'value' (message text).
-    - tokenizer: A tokenizer from the Hugging Face Transformers library used for tokenizing the conversations.
-    - cfg: Configuration settings which include 'add_extra_token' (bool) to determine if an extra token should be added to the tokenized output, and 'context_length' for specifying the tokenization context length.
-
-    Returns:
-    - Dict: A dictionary containing two keys:
-        - 'tokens': A tensor of tokenized conversation data.
-        - 'labels': A tensor of labels for the conversation data, used for training models. Labels are masked based on the conversation structure.
-
-    Note:
-    - The function includes specific token replacements (e.g., DEFAULT_IMAGE_PATCH_TOKEN, <s>, </s>) and masking techniques for labels.
-    - It is designed to work with conversational data where messages alternate between a 'human' and a 'gpt' role.
-    - The function asserts that each message in a conversation alternates between the defined roles and skips messages not starting with the 'human' role.
-    """
-
-    """<extra_id_0>System\n\n<extra_id_1>User\n{user input}\n<extra_id_1>Assistant\n"""
-
-    conv = conversation_lib.conv_nv_dpo.copy()
-
-    # Apply prompt templates
-    conversations = []
-    for source in sources:
-        conv.messages = []
-        conv.system = source.get('system', conv.system)
-
-        strip_end_for_inference = False
-        for i, turn in enumerate(source['conversations']):
-
-            if i % 2 == 1:
-                turn['from'] = conv.roles[1]
-                conv.append_message(turn['from'], turn['value'])
-                if not turn["value"]:
-                    strip_end_for_inference = (
-                        True  # in inference, current turn is empty, thus end tokens need to striped.
-                    )
-            else:
-                turn['from'] = conv.roles[0]
-                conv.append_message(turn['from'], turn['value'])
-        context = conv.get_prompt()
-        if strip_end_for_inference:
-            if context.endswith("\n<extra_id_1>"):
-                context = context[: -len("\n<extra_id_1>")] + "\n"
-        conversations.append(context)
-
-    add_extra_token = cfg.get("add_extra_token")
-    # Tokenize conversations
-    tokens = tokenize(
-        texts=conversations,
-        tokenizer=tokenizer,
-        context_length=cfg.get("context_length"),
-        add_extra_token=add_extra_token,
-    )
-
-    labels = tokens.clone().detach()
-
-    # Mask targets
-    sep = conv.sep + conv.roles[1] + "\n"
-    for conversation, target in zip(conversations, labels):
-        rounds = conversation.split(conv.sep)
-        re_rounds = [conv.sep.join(rounds[:3])]  # system + user + gpt
-
-        for conv_idx in range(3, len(rounds), 2):
-            re_rounds.append(conv.sep.join(rounds[conv_idx : conv_idx + 2]))  # user + gpt
-
-        cur_len = 0
-        for i, rou in enumerate(re_rounds):
-            if rou == "":
-                break
-            parts = rou.split(sep)
-            if len(parts) != 2:
-                break
-
-            instruction_len = len(tokenizer.text_to_ids(parts[0] + sep))
-            round_len = len(tokenizer.text_to_ids(rou + conv.sep))
-            target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
-
-            cur_len += round_len
-        target[cur_len:] = IGNORE_INDEX
-
-    # Check if masking working correctly
-    # print([x for x in zip(tokens[0].numpy().tolist(), labels[0].numpy().tolist())])
 
     if add_extra_token:
         tokens = tokens[:, :-1].contiguous()
@@ -771,11 +676,11 @@ class LazySupervisedDataset(Dataset):
                     ), 'NeMo image transform with setting `image_aspect_ratio` to `square`.'
                     image = self.processor(image)
                 images.append(image)
-            images_tensors = torch.tensor([])
+            media_tensors = torch.tensor([])
             if images:
-                images_tensors = torch.stack(images)
-                cur_token_len = (images_tensors[0].shape[1] // 14) * (
-                    images_tensors[0].shape[2] // 14
+                media_tensors = torch.stack(images)
+                cur_token_len = (media_tensors[0].shape[1] // 14) * (
+                    media_tensors[0].shape[2] // 14
                 )  # FIXME: 14 is hardcoded patch size
                 sources = preprocess_multimodal(
                     copy.deepcopy(sources),
@@ -816,7 +721,7 @@ class LazySupervisedDataset(Dataset):
                                 result = Image.new(pil_img.mode, (height, height), background_color)
                                 result.paste(pil_img, ((height - width) // 2, 0))
                                 return result
-                            
+
                         frames = expand2square(frames, tuple(int(x * 255) for x in self.processor.image_mean))
                         frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values'][0]
                     else:
@@ -844,10 +749,8 @@ class LazySupervisedDataset(Dataset):
             media_tensors = torch.tensor([])
             sources = copy.deepcopy(sources)
 
-        if self.conv_template in ["nvgpt", "nv_steerlm"]:
+        if self.conv_template == "nvgpt":
             data_dict = preprocess_nvgpt(sources, self.tokenizer, self.multimodal_cfg,)
-        elif self.conv_template == "nv_dpo":
-            data_dict = preprocess_nv_dpo(sources, self.tokenizer, self.multimodal_cfg,)
         elif self.conv_template == "v1":
             data_dict = preprocess_v1(sources, self.tokenizer, self.multimodal_cfg,)
         elif self.conv_template == "llama_2":
@@ -881,10 +784,10 @@ class LazySupervisedDataset(Dataset):
 class NevaDataset(LazySupervisedDataset):
     """Dataset for supervised fine-tuning."""
 
-    def __init__(self, data_path: str, tokenizer, multimodal_cfg: dict,data_cfg: dict):
+    def __init__(self, data_path: str, tokenizer, multimodal_cfg: dict, data_cfg: dict):
 
         if data_path.endswith(".json"):
-            super(NevaDataset, self).__init__(data_path, tokenizer, multimodal_cfg,data_cfg)
+            super(NevaDataset, self).__init__(data_path, tokenizer, multimodal_cfg, data_cfg)
 
         elif data_path.endswith(".jsonl"):
             super(NevaDataset, self).__init__(None, tokenizer, multimodal_cfg)
