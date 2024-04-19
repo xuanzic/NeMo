@@ -320,7 +320,7 @@ def setup_trainer_and_model_for_inference(
 
 
 def create_neva_model_and_processor(cfg):
-    from nemo.collections.multimodal.models.neva.neva_model import MegatronNevaModel
+    from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import MegatronNevaModel
 
     plugins = []
     if cfg.get('cluster_type', None) == 'BCP':
@@ -388,6 +388,7 @@ def create_neva_model_and_processor(cfg):
             (
                 app_state.tensor_model_parallel_rank,
                 app_state.pipeline_model_parallel_rank,
+                app_state.expert_model_parallel_rank,
                 app_state.model_parallel_size,
                 app_state.data_parallel_size,
                 app_state.pipeline_model_parallel_split_rank,
@@ -402,6 +403,9 @@ def create_neva_model_and_processor(cfg):
         checkpoint_path = inject_model_parallel_rank(os.path.join(cfg.checkpoint_dir, cfg.checkpoint_name))
         # TODO: This wont work properly (We need to set model.llm.from_pretrained model.vision.from_pretrained to nul)
         model = MegatronNevaModel.load_from_checkpoint(checkpoint_path, hparams_file=cfg.hparams_file, trainer=trainer)
+        neva_cfg = OmegaConf.load(cfg.hparams_file)
+        neva_cfg = neva_cfg.cfg
+        
     else:
         raise ValueError("need at least a nemo file or checkpoint dir")
 
