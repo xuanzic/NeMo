@@ -414,6 +414,7 @@ class NevaModelTextGenerationStrategy(TextGenerationStrategy):
             image_processor=None,
             add_extra_token=add_extra_token,
             context_length=self.cfg.encoder_seq_length,
+            media_type=self.data_cfg.media_type,
         )
 
     def clip_max_len(self, maxlen: int) -> int:
