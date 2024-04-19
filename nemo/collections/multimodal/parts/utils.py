@@ -320,14 +320,14 @@ def setup_trainer_and_model_for_inference(
 
 
 def create_neva_model_and_processor(cfg):
-    from nemo.collections.multimodal.models.neva.neva_model import MegatronNevaModel
+    from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import MegatronNevaModel
 
     plugins = []
     if cfg.get('cluster_type', None) == 'BCP':
         plugins.append(TorchElasticEnvironment())
     # trainer required for restoring model parallel models
     trainer = Trainer(plugins=plugins, strategy=NLPDDPStrategy(), **cfg.trainer)
-
+    
     if (
         cfg.tensor_model_parallel_size < 0
         or cfg.pipeline_model_parallel_size < 0
@@ -385,23 +385,39 @@ def create_neva_model_and_processor(cfg):
             app_state.model_parallel_size = cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size
             app_state.tensor_model_parallel_size = cfg.tensor_model_parallel_size
             app_state.pipeline_model_parallel_size = cfg.pipeline_model_parallel_size
-            (
-                app_state.tensor_model_parallel_rank,
-                app_state.pipeline_model_parallel_rank,
-                app_state.model_parallel_size,
-                app_state.data_parallel_size,
-                app_state.pipeline_model_parallel_split_rank,
-                app_state.virtual_pipeline_model_parallel_rank,
-            ) = fake_initialize_model_parallel(
+            # (
+            #     app_state.tensor_model_parallel_rank,
+            #     app_state.pipeline_model_parallel_rank,
+            #     app_state.model_parallel_size,
+            #     app_state.data_parallel_size,
+            #     app_state.pipeline_model_parallel_split_rank,
+            #     app_state.virtual_pipeline_model_parallel_rank,
+            # ) 
+            
+            results = fake_initialize_model_parallel(
                 world_size=app_state.model_parallel_size,
                 rank=trainer.global_rank,
                 tensor_model_parallel_size_=cfg.tensor_model_parallel_size,
                 pipeline_model_parallel_size_=cfg.pipeline_model_parallel_size,
                 pipeline_model_parallel_split_rank_=cfg.pipeline_model_parallel_split_rank,
             )
+            
+            print(results)
+            (
+                app_state.tensor_model_parallel_rank,
+                app_state.pipeline_model_parallel_rank,
+                app_state.expert_model_parallel_rank,
+                app_state.model_parallel_size,
+                app_state.data_parallel_size,
+                app_state.pipeline_model_parallel_split_rank,
+                app_state.virtual_pipeline_model_parallel_rank,
+            ) = results
+            
         checkpoint_path = inject_model_parallel_rank(os.path.join(cfg.checkpoint_dir, cfg.checkpoint_name))
         # TODO: This wont work properly (We need to set model.llm.from_pretrained model.vision.from_pretrained to nul)
         model = MegatronNevaModel.load_from_checkpoint(checkpoint_path, hparams_file=cfg.hparams_file, trainer=trainer)
+        neva_cfg = OmegaConf.load(cfg.hparams_file)
+        print(neva_cfg)
     else:
         raise ValueError("need at least a nemo file or checkpoint dir")
 
@@ -423,14 +439,14 @@ def create_neva_model_and_processor(cfg):
         else:
             image = maybe_image_path
 
-        if neva_cfg.mm_cfg.vision_encoder.from_hf:
+        if neva_cfg.cfg.mm_cfg.vision_encoder.from_hf:
             processor = CLIPImageProcessor.from_pretrained(
-                neva_cfg.mm_cfg.vision_encoder.from_pretrained, torch_dtype=torch.bfloat16
+                neva_cfg.cfg.mm_cfg.vision_encoder.from_pretrained, torch_dtype=torch.bfloat16
             )
         else:
             processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=torch.bfloat16)
 
-        if neva_cfg.data.image_aspect_ratio == 'keep':
+        if neva_cfg.cfg.data.image_aspect_ratio == 'keep':
             max_hw, min_hw = max(image.size), min(image.size)
             aspect_ratio = max_hw / min_hw
             max_len, min_len = 448, 224
@@ -438,7 +454,7 @@ def create_neva_model_and_processor(cfg):
             image = processor.preprocess(
                 image, return_tensors='pt', do_center_crop=False, size={"shortest_edge": shortest_edge}
             )['pixel_values'][0]
-        elif neva_cfg.data.image_aspect_ratio == 'pad':
+        elif neva_cfg.cfg.data.image_aspect_ratio == 'pad':
 
             def expand2square(pil_img, background_color):
                 width, height = pil_img.size
@@ -458,9 +474,9 @@ def create_neva_model_and_processor(cfg):
         else:
             image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
 
-        if neva_cfg.precision in [16, '16', '16-mixed']:
+        if neva_cfg.cfg.precision in [16, '16', '16-mixed']:
             media = image.type(torch.float16)
-        elif neva_cfg.precision in [32, '32', '32-true']:
+        elif neva_cfg.cfg.precision in [32, '32', '32-true']:
             media = image.type(torch.float32)
         else:
             media = image.type(torch.bfloat16)

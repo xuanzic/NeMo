@@ -49,7 +49,10 @@ class RequestDataSet(Dataset):
 
 @hydra_runner(config_path="conf", config_name="neva_inference")
 def main(cfg) -> None:
+    #print(cfg.inference.images_base_path)
+    #model, vision_tower, tokenizer, image_processor, video_token_len = create_neva_model_and_processor(cfg)
     model, image_processor = create_neva_model_and_processor(cfg)
+    print(model)
 
     length_params: LengthParam = {
         "max_length": cfg.inference.tokens_to_generate,

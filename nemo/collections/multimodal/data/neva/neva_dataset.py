@@ -236,6 +236,9 @@ def preprocess_multimodal(sources: dict, multimodal_cfg: dict, cur_token_len: in
     Returns:
     - dict: The processed sources dictionary after applying multimodal preprocessing steps.
     """
+    print('#####################')
+    print(f'multimodal_cfg is, {multimodal_cfg}')
+    print('###########################')
     is_multimodal = multimodal_cfg['is_multimodal']
 
     media_type = multimodal_cfg['media_type']

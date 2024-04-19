@@ -687,7 +687,12 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
 
     def get_forward_output_only_func(self):
         def fwd_output_only_func(dataloader_iter, model):
-            batch, _, _ = next(dataloader_iter)
+            batch = next(dataloader_iter)
+           # print(f"First batch structure: {first_batch}")
+            #print(f"Type of first batch: {type(first_batch)}")
+            #print(f"Length of first batch: {len(first_batch)} if hasattr(first_batch, '__len__') else 'No length'")
+            
+            #batch, _, _ = next(dataloader_iter)
             extra_arg = {}
             (
                 tokens,
