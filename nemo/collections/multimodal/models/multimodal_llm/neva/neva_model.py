@@ -201,7 +201,7 @@ class NevaWordEmbeddingMixin(torch.nn.Module, adapter_mixins.AdapterModuleMixin)
             media_end_positions = torch.where(input_id == self.media_end_id)[0]
             if self.use_im_start_end:
                 # locate the first media token positions
-                padded_media_indices[idx, : len(media_end_positions)] = media_end_positions - num_patches
+                padded_media_indices[idx, : len(media_end_positions)] = media_end_positions - (num_patches*(num_images_per_sample-1))
                 assert (
                     input_id[padded_media_indices[idx, : len(media_end_positions)] - 1] == self.media_start_id
                 ).all()

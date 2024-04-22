@@ -48,7 +48,7 @@ from nemo.collections.multimodal.data.neva.conversation import (
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 
-MAX_NUM_IMAGES = 8
+MAX_NUM_IMAGES = 1
 IGNORE_INDEX = -1
 
 
@@ -253,10 +253,8 @@ def preprocess_multimodal(sources: dict, multimodal_cfg: dict, cur_token_len: in
     if multimodal_cfg['use_im_start_end']:
         replace_token = DEFAULT_IMAGE_PATCH_TOKEN * image_token_len
     else:
-        replace_token = DEFAULT_IMAGE_PATCH_TOKEN * (image_token_len - 2)
-        replace_token = ''
-        for _ in range(multimodal_cfg['num_frames']):
-            replace_token += DEFAULT_IMAGE_PATCH_TOKEN * (image_token_len-2)
+        #replace_token = DEFAULT_IMAGE_PATCH_TOKEN * (image_token_len - 2)
+        replace_token =  DEFAULT_IMAGE_PATCH_TOKEN * ((image_token_len * (multimodal_cfg['num_frames'])) - 2)
     replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
 
     for source in sources:
@@ -737,9 +735,10 @@ class LazySupervisedDataset(Dataset):
                 videos.append(frames)
             media_tensors = frames
             if videos:
-                #media_tensors = torch.stack(videos)
-                cur_token_len = (media_tensors[0].shape[1] // 14) * (
-                    media_tensors[0].shape[2] // 14
+                media_tensors = torch.stack(videos) #1,9,3,224,224
+                
+                cur_token_len = (media_tensors[0].shape[-1] // 14) * (
+                    media_tensors[0].shape[-2] // 14
                 )  # FIXME: 14 is hardcoded patch size
                 sources = preprocess_multimodal(
                     copy.deepcopy(sources),
@@ -773,17 +772,22 @@ class LazySupervisedDataset(Dataset):
             else:
                 crop_size = self.multimodal_cfg['crop_size']
             # image does not exist in the data, but the model is multimodal
+            #TODO, if there are different videos on T dimensions.
             if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                #9, 3, 224,224
+                #1, 9, 3, 224,224
                 padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
                 zero_padding = torch.zeros(
                 (padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float
                 )
+                #num videos, num_frames, channels, height, width
                 media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
                 
             if self.multimodal_cfg['media_type'] == 'image':
                 data_dict['image'] = media_tensors
             elif self.multimodal_cfg['media_type'] == 'video':
                 data_dict['video'] = media_tensors
+            #(batch, num_video, num_frames, channels, height, width)
         return data_dict
 
 
@@ -839,8 +843,9 @@ class DataCollatorForSupervisedDataset(object):
             pad_len = max_len - instance['tokens'].shape[0]
             instance['tokens'] = F.pad(instance['tokens'], (0, pad_len), 'constant', 0)
             instance['labels'] = F.pad(instance['labels'], (0, pad_len), 'constant', -1)
-
+        #(1,9,3,224,224)
         batch = default_collate(instances)
+        (1,1,9,3,224,224)
         tokenizer = self.tokenizer
         model_cfg = self.model_cfg
 
@@ -869,8 +874,8 @@ class DataCollatorForSupervisedDataset(object):
         if media is None:
             raise NotImplementedError
         else:
-            media = rearrange(media, "b T c h w -> b T 1 c h w")
-
+            #media = rearrange(media, "b T F c h w -> b T F c h w")
+            media = rearrange(media, "b 1 F c h w -> b F 1 c h w")
         batch = {
             'tokens': tokens,
             'labels': labels,
