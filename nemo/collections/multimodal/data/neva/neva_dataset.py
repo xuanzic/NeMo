@@ -20,6 +20,7 @@ import tarfile
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Union
 
+import numpy as np
 import decord
 import torch
 import torch.nn.functional as F
@@ -164,9 +165,10 @@ class TarOrFolderVideoLoader:
                     frames.append(img)
                 return frames
             else:
-                partition_size = max(1, len(cap) // self.data_cfg['num_frames'])
+                num_frames = min(len(cap), self.data_cfg['num_frames'])
+                indices = np.linspace(0, len(cap) - 1, num_frames, dtype=int)
                 frames = []
-                for i in range(0, len(cap), partition_size):
+                for i in indices:
                     rgb_frame = cap[i].asnumpy()[:, :, ::-1]
                     img = Image.fromarray(rgb_frame).convert('RGB')
                     frames.append(img)
@@ -845,7 +847,7 @@ class DataCollatorForSupervisedDataset(object):
             instance['labels'] = F.pad(instance['labels'], (0, pad_len), 'constant', -1)
         #(1,9,3,224,224)
         batch = default_collate(instances)
-        (1,1,9,3,224,224)
+        #(1,1,9,3,224,224)
         tokenizer = self.tokenizer
         model_cfg = self.model_cfg
 
@@ -874,8 +876,9 @@ class DataCollatorForSupervisedDataset(object):
         if media is None:
             raise NotImplementedError
         else:
-            #media = rearrange(media, "b T F c h w -> b T F c h w")
-            media = rearrange(media, "b 1 F c h w -> b F 1 c h w")
+            media = rearrange(media, "b T F c h w -> b T F c h w")
+            #1, 1, 25, 256, 6144
+            #media = rearrange(media, "b 1 F c h w -> b F 1 c h w")
         batch = {
             'tokens': tokens,
             'labels': labels,

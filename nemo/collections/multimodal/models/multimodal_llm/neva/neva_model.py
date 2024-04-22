@@ -161,7 +161,7 @@ class NevaWordEmbeddingMixin(torch.nn.Module, adapter_mixins.AdapterModuleMixin)
 
         assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
         b, T, F = vision_x.shape[:3]
-        assert F == 1, "Only single frame supported"
+        #assert F == 1, "Only single frame supported"
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         vision_x = vision_x.to(self.vision_encoder.dtype)
@@ -187,8 +187,8 @@ class NevaWordEmbeddingMixin(torch.nn.Module, adapter_mixins.AdapterModuleMixin)
 
         # calculate media features without gradients
         media_features = self.encode_vision_x(media)  # b T F S(eq) H(idden)
-        num_images_per_sample = media_features.size(1)
-        num_patches = media_features.size(3)
+        num_images_per_sample = media_features.size(1) 
+        num_patches = media_features.size(3) * media_features.size(2) 
         # flatten patches
         media_features = media_features.view(batch_size, -1, hidden_size)
 
@@ -206,7 +206,7 @@ class NevaWordEmbeddingMixin(torch.nn.Module, adapter_mixins.AdapterModuleMixin)
                     input_id[padded_media_indices[idx, : len(media_end_positions)] - 1] == self.media_start_id
                 ).all()
             else:
-                padded_media_indices[idx, : len(media_end_positions)] = media_end_positions - (num_patches*(num_images_per_sample-1)) + 1
+                padded_media_indices[idx, : len(media_end_positions)] = media_end_positions - num_patches + 1
                 assert (input_id[padded_media_indices[idx, : len(media_end_positions)]] == self.media_start_id).all()
 
         # use indices to create a span
@@ -387,6 +387,9 @@ class MCoreNevaModel(MCoreGPTModel, NevaBaseModel):
     def freeze_llm(self, mm_cfg):
         for param in chain(self.embedding.parameters(), self.decoder.parameters(), self.output_layer.parameters(),):
             param.requires_grad = False
+        self.embedding = self.embedding.eval()
+        self.decoder = self.decoder.eval()
+        self.output_layer = self.output_layer.eval()
 
     def forward(
         self, *args, **kwargs,
@@ -458,7 +461,7 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
         media_end_id = self.tokenizer.token_to_id(DEFAULT_IM_END_TOKEN)
 
         if self.mcore_gpt:
-            if not parallel_state.is_initialized():
+            if parallel_state.is_unitialized():
 
                 def dummy():
                     return
@@ -792,7 +795,9 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
         Args:
             stage (str, optional): Can be 'fit', 'validate', 'test' or 'predict'. Defaults to None.
         """
-        num_parameters_on_device, total_num_parameters = self._get_total_params_across_model_parallel_groups_gpt_bert()
+        num_parameters_on_device, total_num_parameters = self._get_total_params_across_model_parallel_groups_gpt_bert(
+            self.model
+        )
 
         logging.info(
             f'Pipeline model parallel rank: {parallel_state.get_pipeline_model_parallel_rank()}, '
@@ -993,7 +998,7 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
     ) -> OutputType:
 
         # check whether the DDP is initialized
-        if not parallel_state.is_initialized():
+        if parallel_state.is_unitialized():
 
             def dummy():
                 return
