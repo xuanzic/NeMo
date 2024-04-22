@@ -48,7 +48,7 @@ from nemo.collections.multimodal.data.neva.conversation import (
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 
-MAX_NUM_IMAGES = 1
+MAX_NUM_IMAGES = 8
 IGNORE_INDEX = -1
 
 
@@ -254,6 +254,9 @@ def preprocess_multimodal(sources: dict, multimodal_cfg: dict, cur_token_len: in
         replace_token = DEFAULT_IMAGE_PATCH_TOKEN * image_token_len
     else:
         replace_token = DEFAULT_IMAGE_PATCH_TOKEN * (image_token_len - 2)
+        replace_token = ''
+        for _ in range(multimodal_cfg['num_frames']):
+            replace_token += DEFAULT_IMAGE_PATCH_TOKEN * (image_token_len-2)
     replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
 
     for source in sources:
@@ -706,7 +709,7 @@ class LazySupervisedDataset(Dataset):
                         shortest_edge = int(min(max_len / aspect_ratio, min_len))
                         frames = self.processor.preprocess(
                             frames, return_tensors='pt', do_center_crop=False, size={"shortest_edge": shortest_edge}
-                        )['pixel_values'][0]
+                        )['pixel_values']
                     elif self.multimodal_cfg['image_aspect_ratio'] == 'pad':
 
                         def expand2square(pil_img, background_color):
@@ -723,18 +726,18 @@ class LazySupervisedDataset(Dataset):
                                 return result
 
                         frames = expand2square(frames, tuple(int(x * 255) for x in self.processor.image_mean))
-                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values'][0]
+                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values']
                     else:
-                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values'][0]
+                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values']
                 else:
                     assert (
                         self.multimodal_cfg['image_aspect_ratio'] == 'square'
                     ), 'NeMo image transform with setting `image_aspect_ratio` to `square`.'
                     frames = self.processor(frames)
                 videos.append(frames)
-            media_tensors = torch.tensor([])
+            media_tensors = frames
             if videos:
-                media_tensors = torch.stack(videos)
+                #media_tensors = torch.stack(videos)
                 cur_token_len = (media_tensors[0].shape[1] // 14) * (
                     media_tensors[0].shape[2] // 14
                 )  # FIXME: 14 is hardcoded patch size
@@ -770,10 +773,13 @@ class LazySupervisedDataset(Dataset):
             else:
                 crop_size = self.multimodal_cfg['crop_size']
             # image does not exist in the data, but the model is multimodal
-            zero_padding = torch.zeros(
-                (MAX_NUM_IMAGES - len(media_tensors), 3, crop_size[0], crop_size[1]), dtype=torch.float
-            )
-            media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+            if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
+                zero_padding = torch.zeros(
+                (padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float
+                )
+                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+                
             if self.multimodal_cfg['media_type'] == 'image':
                 data_dict['image'] = media_tensors
             elif self.multimodal_cfg['media_type'] == 'video':
@@ -909,6 +915,7 @@ def make_supervised_data_module(tokenizer, model_cfg) -> Dict:
             add_extra_token=add_extra_token,
             context_length=model_cfg.encoder_seq_length,
             media_type=data_cfg.media_type,
+            num_frames=data_cfg.num_frames,
         ),
         data_cfg=dict(
             splice_single_frame=data_cfg.splice_single_frame,
