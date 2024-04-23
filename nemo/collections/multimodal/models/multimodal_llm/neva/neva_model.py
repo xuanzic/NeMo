@@ -800,6 +800,7 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
         logging.info(
             f'Pipeline model parallel rank: {parallel_state.get_pipeline_model_parallel_rank()}, '
             f'Tensor model parallel rank: {parallel_state.get_tensor_model_parallel_rank()}, '
+            f'Context parallel rank: {parallel_state.get_context_parallel_rank()}, '
             f'Number of model parameters on device: {num_parameters_on_device:.2e}. '
             f'Total number of model parameters: {total_num_parameters:.2e}.'
         )
@@ -827,7 +828,8 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
             micro_batch_size = self.cfg.get('micro_batch_size', 1)
             tensor_model_parallel_size = self.cfg.get('tensor_model_parallel_size', 1)
             pipeline_model_parallel_size = self.cfg.get('pipeline_model_parallel_size', 1)
-            total_data_parallel_size = total_gpus_number // (tensor_model_parallel_size * pipeline_model_parallel_size)
+            context_parallel_size = self.cfg.get('context_parallel_size', 1)
+            total_data_parallel_size = total_gpus_number // (tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size)
 
             assert batch_size_increment % (micro_batch_size * total_data_parallel_size) == 0, (
                 'expected'

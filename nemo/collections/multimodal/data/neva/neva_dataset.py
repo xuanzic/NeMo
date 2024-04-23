@@ -172,6 +172,9 @@ class TarOrFolderVideoLoader:
                     rgb_frame = cap[i].asnumpy()[:, :, ::-1]
                     img = Image.fromarray(rgb_frame).convert('RGB')
                     frames.append(img)
+
+                while len(frames) < self.data_cfg['num_frames']:
+                    frames.append(frames[-1])
                 return frames
 
 
