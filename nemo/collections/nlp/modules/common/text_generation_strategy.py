@@ -346,14 +346,23 @@ def neva_process_prompts(prompt, tokenizer, multimodal_cfg, num_media_latents, c
             'conversations': [{'from': 'User', 'value': prompt}, {'from': 'Assistant', 'value': '',},],
         }
 
-        for turn in record['conversations']:  #
+        for turn in record['conversations']:  
             if turn.get('value') is not None:
                 turn['value'] = re.sub('<image>', f'{DEFAULT_IMAGE_TOKEN}\n', turn['value'])
         list_data_dict.append(record)
-
+        
+        num_media_latents = min((num_media_latents // 14) * (num_media_latents // 14), 576)
+        
+        #overwrite the media_type in multimodal_cfg to image for image inference using video neva
+        # if the prompt does not contain video, then the media_type is image
+        if list_data_dict[0]['conversations'][0]['value'].find('video') == -1:
+            if multimodal_cfg.get('media_type') is not None and multimodal_cfg.get('num_frames') is not None:
+                multimodal_cfg['media_type'] = 'image'
+                multimodal_cfg['num_frames'] = 1
+                
         sources = preprocess_multimodal(
             copy.deepcopy(list_data_dict), multimodal_cfg, num_media_latents
-        )  # HARDCODED FOR NOW
+        )  
         if multimodal_cfg["conv_template"] in ["nvgpt", "nv_steerlm"]:
             data_dict = preprocess_nvgpt(sources, tokenizer, multimodal_cfg)
         else:
@@ -368,6 +377,8 @@ def neva_process_prompts(prompt, tokenizer, multimodal_cfg, num_media_latents, c
             if turn.get('value') is not None:
                 turn['value'] = re.sub('<image>', f'{DEFAULT_IMAGE_TOKEN}\n', turn['value'])
         list_data_dict.append(record)
+        
+        num_media_latents = min((num_media_latents // 14) * (num_media_latents // 14), 576)
 
         sources = preprocess_multimodal(
             copy.deepcopy(list_data_dict), multimodal_cfg, num_media_latents
@@ -382,6 +393,7 @@ def neva_process_prompts(prompt, tokenizer, multimodal_cfg, num_media_latents, c
             if turn.get('value') is not None:
                 turn['value'] = re.sub('<image>', f'{DEFAULT_IMAGE_TOKEN}\n', turn['value'])
         list_data_dict.append(record)
+        num_media_latents = min((num_media_latents // 14) * (num_media_latents // 14), 576)
 
         sources = preprocess_multimodal(
             copy.deepcopy(list_data_dict), multimodal_cfg, num_media_latents
@@ -414,7 +426,11 @@ class NevaModelTextGenerationStrategy(TextGenerationStrategy):
             image_processor=None,
             add_extra_token=add_extra_token,
             context_length=self.cfg.encoder_seq_length,
-            media_type=self.data_cfg.media_type,
+            # media_type=self.data_cfg.media_type,
+            # num_frames=self.data_cfg.num_frames,
+            media_type = getattr(self.data_cfg, 'media_type', 'image'),
+            num_frames = getattr(self.data_cfg, 'num_frames',  1),
+            
         )
 
     def clip_max_len(self, maxlen: int) -> int:

@@ -226,6 +226,7 @@ class NevaWordEmbeddingMixin(torch.nn.Module, adapter_mixins.AdapterModuleMixin)
 
         # chop off placeholder
         updated_input_embeds = updated_input_embeds[:, :sequence_length]
+        
 
         return updated_input_embeds
 
@@ -688,7 +689,8 @@ class MegatronNevaModel(MultimodalAdapterModelMixin, MegatronGPTModel):
 
     def get_forward_output_only_func(self):
         def fwd_output_only_func(dataloader_iter, model):
-            batch, _, _ = next(dataloader_iter)
+            #batch, _, _ = next(dataloader_iter)
+            batch = next(dataloader_iter)
             extra_arg = {}
             (
                 tokens,
